@@ -44,19 +44,19 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 ##-- directories
 
-workdir = os.path.dirname(os.path.realpath(__file__))
-# workdir = '/Users/bfildier/Code/analyses/EUREC4A/Fildier2022_analysis/scripts'
+# workdir = os.path.dirname(os.path.realpath(__file__))
+workdir = '/Users/bfildier/Code/analyses/EUREC4A/EUREC4A_organization/scripts'
 repodir = os.path.dirname(workdir)
 moduledir = os.path.join(repodir,'functions')
 resultdir = os.path.join(repodir,'results','radiative_features')
 figdir = os.path.join(repodir,'figures','paper')
-inputdir = os.path.join(repodir,"input")
-radinputdir = os.path.join(repodir,"input")
+inputdir = '/Users/bfildier/Dropbox/Data/EUREC4A/sondes_radiative_profiles/'
+radinputdir = os.path.join(repodir,'input')
 imagedir = os.path.join(repodir,'figures','snapshots','with_HALO_circle')
-
+scriptsubdir = 'Fildier2021'
 
 # Load own module
-projectname = 'Fildier2022_analysis'
+projectname = 'EUREC4A_organization'
 thismodule = sys.modules[__name__]
 
 ## Own modules

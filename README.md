@@ -15,6 +15,8 @@ conda activate pyF22
 
 - input/rad_profiles_moist_intrusions_20200213lower.nc
 - input/rad_profiles_moist_intrusions_20200213lower_fix_k.nc
+- input/rad_profiles_moist_intrusions_20200213lower_fix_T.nc
+- input/rad_profiles_moist_intrusions_20200213lower_fix_k_T.nc
 - results/idealized_calculations/kappa_fit.pickle
 - input/rad_profiles_CF.nc
 

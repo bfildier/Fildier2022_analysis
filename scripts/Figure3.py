@@ -3,10 +3,11 @@
 """
 Figure 3
 
-Created on Thu Aug  4 08:19:28 2022
+Created on Mon Jun 20 09:33:29 2022
 
 @author: bfildier
 """
+
 
 ##-- modules
 
@@ -19,7 +20,6 @@ from datetime import datetime as dt
 from datetime import timedelta, timezone
 import pytz
 import pickle
-import argparse
 
 # stats
 from scipy.stats import gaussian_kde
@@ -44,18 +44,19 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 ##-- directories
 
-workdir = os.path.dirname(os.path.realpath(__file__))
-# workdir = '/Users/bfildier/Code/analyses/EUREC4A/Fildier2022_analysis/scripts'
+# workdir = os.path.dirname(os.path.realpath(__file__))
+workdir = '/Users/bfildier/Code/analyses/EUREC4A/EUREC4A_organization/scripts'
 repodir = os.path.dirname(workdir)
 moduledir = os.path.join(repodir,'functions')
 resultdir = os.path.join(repodir,'results','radiative_features')
 figdir = os.path.join(repodir,'figures','paper')
-inputdir = os.path.join(repodir,"input")
-radinputdir = os.path.join(repodir,"input")
+inputdir = '/Users/bfildier/Dropbox/Data/EUREC4A/sondes_radiative_profiles/'
+radinputdir = os.path.join(repodir,'input')
 imagedir = os.path.join(repodir,'figures','snapshots','with_HALO_circle')
+scriptsubdir = 'Fildier2021'
 
 # Load own module
-projectname = 'Fildier2022_analysis'
+projectname = 'EUREC4A_organization'
 thismodule = sys.modules[__name__]
 
 ## Own modules
@@ -94,361 +95,356 @@ if __name__ == "__main__":
     ##-- Load all data
     
     exec(open(os.path.join(workdir,"load_data.py")).read())
-
-
-#%% Functions for connecting zoomed subplots
-
-from matplotlib.transforms import Bbox, TransformedBbox, blended_transform_factory
-
-from mpl_toolkits.axes_grid1.inset_locator import BboxPatch, BboxConnector,\
-    BboxConnectorPatch
-
-def connect_bbox(bbox1, bbox2,
-                 loc1a, loc2a, loc1b, loc2b,
-                 prop_connect, prop_boxes=None):
     
-    if prop_boxes is None:
-        prop_boxes = prop_connect.copy()
-        prop_boxes["alpha"] = prop_boxes.get("alpha", 1)*0.2
+#%% Draw Figure 3
 
-    c1 = BboxConnector(bbox1, bbox2, loc1=loc1a, loc2=loc2a, **prop_connect)
-    c1.set_clip_on(False)
-    c2 = BboxConnector(bbox1, bbox2, loc1=loc1b, loc2=loc2b, **prop_connect)
-    c2.set_clip_on(False)
+    i_fig = 3
 
-    bbox_patch1 = BboxPatch(bbox1, **prop_boxes)
-    bbox_patch2 = BboxPatch(bbox2, **prop_boxes)
-
-    p = BboxConnectorPatch(bbox1, bbox2,
-                           loc1a=loc1a, loc2a=loc2a, loc1b=loc1b, loc2b=loc2b,
-                           **prop_connect)
-    p.set_clip_on(False)
-
-    return c1, c2, bbox_patch1, bbox_patch2, p
-
-def zoom_effect_yaxis(ax1, ax2, **kwargs):
-    """
-    ax2 : the big main axes
-    ax1 : the zoomed axes
-    The xmin & xmax will be taken from the
-    ax1.viewLim.
-    """
-
-    tt = ax1.transScale + (ax1.transLimits + ax2.transAxes)
-    trans = blended_transform_factory(tt,ax2.transData)
-
-    mybbox1 = ax1.bbox
-    mybbox2 = TransformedBbox(ax1.viewLim, trans)
-
-    prop_boxes = kwargs.copy()
-    prop_boxes["ec"] = "darkgoldenrod"
-    prop_boxes["fc"] = "cornsilk"
-    prop_boxes["alpha"] = 0.2
-    
-    prop_connect = kwargs.copy()
-    prop_connect["ec"] = "darkgoldenrod"
-    prop_connect["linestyle"] = '-'
-    prop_connect["linewidth"] = 0.8
-    prop_connect["alpha"] = 0.2
-
-    c1, c2, bbox_patch1, bbox_patch2, p = \
-        connect_bbox(mybbox1, mybbox2,
-                     loc1a=2, loc2a=1, loc1b=3, loc2b=4, 
-                     prop_connect=prop_connect, prop_boxes=prop_boxes)
-
-    ax1.add_patch(bbox_patch1)
-    ax2.add_patch(bbox_patch2)
-    ax2.add_patch(c1)
-    ax2.add_patch(c2)
-    ax2.add_patch(p)
-
-    return c1, c2, bbox_patch1, bbox_patch2, p
-
-
-def computeWPaboveZ(qv,pres,p_top):
-    """Calculates the integrated water path above each level.
-
-    Arguments:
-        - qv: specific humidity in kg/kg, Nz-vector
-        - pres: pressure coordinate in hPa, Nz vector
-        - p_top: pressure of upper integration level
-
-    returns:
-        - wp_z: water path above each level, Nz-vector"""
-
-    Np = qv.shape[0]
-    wp_z = np.full(Np,np.nan)
-
-    p_increasing = np.diff(pres)[0] > 0
-    
-    if p_increasing:
+    m_to_cm = 1e2
         
-        i_p_top = np.where(pres >= p_top)[0][0]
-        
-        for i_p in range(i_p_top,Np):
-        # self.wp_z[:,i_z] = self.mo.pressureIntegral(arr=data.specific_humidity[:,i_z:],pres=pres[i_z:],p_levmin=pres[i_z],p_levmax=pres[-1],z_axis=z_axis)
-
-            arr = qv
-            p = pres
-            p0 = p_top
-            p1 = p[i_p]
-            i_w = i_p
+    def piecewise_linear(z:np.array,z_breaks:list,rh_breaks:list):
+        """
+        Define piecewise linear RH shape with constant value at top and bottom.
+    
+        Args:
+            z (np.array): z coordinate
+            z_breaks (list): z values of break points
+            rh_breaks (list): rh values of break points
+    
+        Returns:
+            np.array: piecewize rh
             
-            wp_z[i_w] = mo.pressureIntegral(arr=arr,pres=p,p0=p0,p1=p1)
-
-    else:
+        """
         
-        i_p_top = np.where(pres >= p_top)[0][-1]
-
-        for i_p in range(i_p_top):
-            
-            arr = np.flip(qv)
-            p = np.flip(pres)
-            p0 = p_top
-            p1 = pres[i_p]
-            i_w = i_p
-
-            wp_z[i_w] = mo.pressureIntegral(arr=arr,pres=p,p0=p0,p1=p1)
-
-    return wp_z
-
-
-
-#%% Figure 3
-
-i_fig = 3
-
-hPa_to_Pa = 1e2
-
-#--- data
-
-N_sample = Nsample = 20
-inds_uniformRH = slice(6,26)
-
-# coordinates
-W_all = [float(str(radprf_MI_20200213lower.name[inds_uniformRH][i].data)[2:6]) for i in range(N_sample)]
-# W_all = np.array(W_all)-W_ref
-H_all = [float(str(radprf_MI_20200213lower.name[inds_uniformRH.stop:inds_uniformRH.stop+N_sample][i].data)[11:15]) for i in range(N_sample)]
-
-
-i_ref = 1
-radprf2show = radprf_MI_20200213lower
-
-# peak height
-# z_jump = 1.66883978
-z_jump = 1.81
-z = radprf2show.zlay[0]/1e3 # km
-k_jump = i_jump = np.where(z>=z_jump)[0][0]
-pres_jump = radprf2show.play[k_jump]/1e2 # hPa
-
-qradlw_peak = np.full((Nsample,Nsample),np.nan)
-qradlw_peak_ref = np.full((Nsample,Nsample),np.nan)
-
-delta_qradlw_peak = np.full((Nsample,Nsample),np.nan)
-
-ratio_qradlw_peak = np.full((Nsample,Nsample),np.nan)
-
-for i_W in range(Nsample):
-    for i_H in range(Nsample):
+        N_breaks = len(z_breaks)
         
-        W = W_all[i_W]
-        H = H_all[i_H]
-        name = 'W_%2.2fmm_H_%1.2fkm'%(W,H)
-        i_prof = np.where(np.isin(radprf2show.name.data,name))[0][0]
+        cond_list = [z <= z_breaks[0]]+\
+                    [np.logical_and(z > z_breaks[i-1],z <= z_breaks[i]) for i in range(1,N_breaks)]+\
+                    [z > z_breaks[N_breaks-1]]
+                    
+        def make_piece(k):
+            def f(z):
+                return rh_breaks[k-1]+(rh_breaks[k]-rh_breaks[k-1])/(z_breaks[k]-z_breaks[k-1])*(z-z_breaks[k-1])
+            return f 
+        func_list = [lambda z: rh_breaks[0]]+\
+                    [make_piece(k) for k in range(1,N_breaks)]+\
+                    [lambda z: rh_breaks[N_breaks-1]]
+                    
+        return np.piecewise(z,cond_list,func_list)
+    
+    def waterPath(qvstar_surf,pres,pres_jump,rh_min,rh_max,alpha,i_surf=-1):
+        """Water path from top of atmosphere, in mm
         
-        qradlw_peak[i_W,i_H] = radprf_MI_20200213lower.q_rad_lw[i_prof,k_jump].data
-        qradlw_peak_ref[i_W,i_H] = radprf_MI_20200213lower['q_rad_lw'].data[i_ref].data[i_jump]
+        - qv_star_surf: surface saturated specific humidity (kg/kg)
+        - pres: reference pressure array (hPa)
+        - pres_jump: level of RH jump (hPa)
+        - rh_max: lower-tropospheric RH
+        - rh_min: upper-tropospheric RH
+        - alpha: power exponent
+        - i_surf: index of surface layer in array (default is -1, last element)
+        """
         
-        delta_qradlw_peak[i_W,i_H] = radprf_MI_20200213lower.q_rad_lw[i_prof,k_jump].data - radprf_MI_20200213lower['q_rad_lw'].data[i_ref].data[i_jump]
+        hPa_to_Pa = 100
+        rho_w = 1e3 # kg/m3
+        m_to_mm = 1e3
         
-        ratio_qradlw_peak[i_W,i_H] = radprf_MI_20200213lower.q_rad_lw[i_prof,k_jump].data / radprf_MI_20200213lower['q_rad_lw'].data[i_ref].data[i_jump]
+        # init
+        W = np.full(pres.shape,np.nan)
+        # constant
+        A = qvstar_surf/(pres[i_surf]*hPa_to_Pa)**alpha/gg/(1+alpha)
+        print(A)
+        # lower troposphere
+        lowert = pres >= pres_jump
+        W[lowert] = A*(rh_max*(pres[lowert]*hPa_to_Pa)**(alpha+1)-(rh_max-rh_min)*(pres_jump*hPa_to_Pa)**(alpha+1))
+        # upper troposphere
+        uppert = pres < pres_jump
+        W[uppert] = A*rh_min*(pres[uppert]*hPa_to_Pa)**(alpha+1)
         
-
-#--- show
-
-# Figure layout
-fig = plt.figure(figsize=(13.5,4.5))
-
-gs = GridSpec(1, 3, width_ratios=[1.5,1.5,2.5], height_ratios=[1],hspace=0.25,wspace=0.3)
-ax1 = fig.add_subplot(gs[0])
-ax2 = fig.add_subplot(gs[1])
-ax3 = fig.add_subplot(gs[2])
-
-# peak height
-# z_jump = 1.66883978
-z_jump = moist_intrusions['20200213, lower']['fit']['z_breaks_id'][0]
-z = radprf_MI_20200213.zlay[0]/1e3 # km
-k_jump = np.where(z>=z_jump)[0][0]
-pres_jump = radprf_MI_20200213.play[k_jump].data/1e2 # hPa
-
-labs = 'no intrusion','fitted from data','homogenized, same W','idealized, same W'
-
-#-- (a) and (b)
-# radprf_ab = radprf_MI_20200213
-# i_ref = 4
-# i_mi = 2
-# i_rectRH = 4
-# i_homoRH = 3
-radprf = radprf_MI_20200213lower
-i_ref = 1
-i_mi = 2
-i_rectRH = 3
-i_homoRH = 4
-
-for ax, varid in zip((ax1,ax2),('rh','q_rad_lw')):
+        return W/rho_w*m_to_mm
     
-    #- peak level
-    ax.axhline(z_jump,c='darkgoldenrod',linestyle='--',linewidth=0.8,alpha=0.8)
+    def computeBeta(pres,pres_jump,rh_min,rh_max,alpha,i_surf=-1):
+        """beta exponent
         
-    #- reference with intrusion (from piecewise linear fit)
-    z = np.array(radprf.zlay[i_ref]/1e3) # km
-    var_mi = radprf[varid].data[i_mi]
-    # show
-    if ax == ax1:
-        lab = labs[1]
-    ax.plot(var_mi,z,'k',label=lab)
-
-    #- reference without intrusion (from piecewise linear fit)
-    z = np.array(radprf.zlay[i_ref]/1e3) # km
-    var_ref = radprf[varid].data[i_ref]
-    # show
-    if ax == ax1:
-        lab = labs[0]
-    ax.plot(var_ref,z,'grey',label=lab)
-    
-    #- rectangle-RH intrusion, same water path, same height
-    z = np.array(radprf.zlay[i_ref]/1e3) # km
-    var_rectRH = radprf[varid].data[i_rectRH]
-    # show
-    if ax == ax1:
-        lab = labs[3]
-    ax.plot(var_rectRH,z,'b',label=lab)
-    
-    #- homogenized rh, same water path at peak level
-    z = np.array(radprf.zlay[i_ref]/1e3) # km
-    var_homoRH = radprf[varid].data[i_homoRH]
-    # show
-    if ax == ax1:
-        lab = labs[2]
-    ax.plot(var_homoRH,z,'b--',label=lab)
-    
-
-
-ax1.set_ylabel('z (km)')
-ax2.set_ylabel('z (km)')
-ax1.set_xlabel('Relative humidity')
-ax2.set_xlabel(r'LW $Q_{rad}$ (K/day)')
-
-ax1.set_ylim((-0.15,10.15))
-ax2.set_ylim((0,2.3))
-ax2.set_xlim((-13.1,0.1))
-
-ax1.legend(fontsize=7,loc='upper right')
-
-#- connecting (a) and (b)
-zoom_effect_yaxis(ax2, ax1)
-
-
-#-- (c) intrusions at all heights and water paths
-ax = ax3
-# radprf = radprf_RMI_20200213
-radprf = radprf_MI_20200213lower
-
-cmap = plt.cm.RdYlBu_r
-vmin = 0.
-vmax = 1.
-norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
-
-# colors
-ax.contourf(W_all,H_all,ratio_qradlw_peak.T,levels=30,cmap=cmap,vmin=vmin,vmax=vmax)
-
-# lines
-cont = ax.contour(W_all,H_all,ratio_qradlw_peak.T,levels=np.linspace(0.1,0.9,9),colors=('grey',),
-                  linestyles=('-',),linewidths=(0.8,),vmin=vmin,vmax=vmax)
-plt.clabel(cont, fmt = '%1.1f', colors = 'grey', fontsize=10) #contour line labels
-
-# labels
-ax.set_xlabel('Intrusion water path (mm)')
-ax.set_ylabel('Intrusion height (km)')
-
-# colorbar
-cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm,cmap=cmap),
-                 ax=ax,shrink=0.99,pad=0.04)
-# cb.set_label(r'LW $Q_{rad}$ peak (K/day)')
-cb.set_label(r'Ratio to reference peak')
-
-ax.set_title(r'Normalized lower peak (at 1.8 km)')
-
-
-# Each day's intrusion
-for daylab in moist_intrusions.keys():
-    
-    W_int = moist_intrusions[daylab]['stats']['W_int']
-    z_int_bottom = moist_intrusions[daylab]['stats']['z_int_bottom']
-    z_int_center = moist_intrusions[daylab]['stats']['z_int_center']
-    z_int_top = moist_intrusions[daylab]['stats']['z_int_top']
-    
-    # key_col = 'cornsilk'
-    key_col = 'k'
-    
-    if daylab in ['20200209','20200211']:
-        ax.scatter(W_int,z_int_center,marker='o',c=key_col,edgecolor='none')
-        ax.text(W_int+0.32,z_int_center,' '+daylab,c=key_col,ha='right',va='bottom',rotation='vertical')
-    elif daylab in ['20200128','20200213, upper']:
-        ax.scatter(W_int,z_int_center,marker='o',c=key_col,edgecolor='none')
-        ax.text(W_int,z_int_center,' '+daylab,c=key_col,ha='right',va='bottom',rotation='vertical')
-    else:
-        ax.scatter(W_int,z_int_center,marker='o',c='blue',edgecolor='blue')
-        ax.text(W_int,z_int_center,' '+daylab,c=key_col,ha='right',va='bottom',rotation='vertical')
-    
-# # Equivalent height of cooling peak reduction by a uniform increas in RH
-# # (the center height of a rectangle intrusion that gives the same peak reduction)
-# H_equiv = np.zeros((Nsample,))
-# for i_W in range(Nsample):
+        Arguments:
+        - pres: reference pressure array (hPa)
+        - pres_jump: level of RH jump (hPa)
+        - rh_max: lower-tropospheric RH
+        - rh_min: upper-tropospheric RH
+        - alpha: power exponent
+        """
         
-#     W = W_all[i_W]#+W_ref
-#     name = 'W_%2.2fmm_uniform_RH'%(W)
-#     i_prof = np.where(np.isin(radprf.name.data,name))[0][0]
-#     qradlw_peak_uRH = radprf.q_rad_lw[i_prof,k_jump].data
-#     # print(i_prof,qradlw_peak_uRH)
-#     delta_qradlw_uRH = qradlw_peak_uRH - qradlw_peak_ref
+        hPa_to_Pa = 100 
     
-#     i_H = np.where(delta_qradlw_peak[i_W,:] >= delta_qradlw_uRH)[0][0]
-#     H_equiv[i_W] = H_all[i_H]
+        # init
+        beta = np.full(pres.shape,np.nan)
+        # lower troposphere
+        lowert = pres >= pres_jump
+        beta[lowert] = (alpha+1)/(1 - (1-rh_min/rh_max)*(pres_jump/pres[lowert])**(alpha+1))
+        # upper troposphere
+        uppert = pres < pres_jump
+        beta[uppert] = alpha+1
+        
+        return beta
+    
+    hide_id_prof = False
+    
+    day = '20200126'
+    date = pytz.utc.localize(dt.strptime(day,'%Y%m%d'))
+    data_day = data_all.sel(launch_time=day)
+    f = rad_features_all[day]
+    
+    pres_data = data_day.pressure/1e2 # hPa
+    pres_fit = np.linspace(0,1000,1001)
+    
+    def updateBounds(ax,x_left,x_right,y_bot,y_top):
+        """Save boundaries for legend"""
+        
+        x,y,w,h = ax.get_position().bounds
+        x_left = np.nanmin(np.array([x,x_left]))
+        x_right = np.nanmax(np.array([x+w,x_right]))
+        y_bot = np.nanmin(np.array([y,y_bot]))
+        y_top = np.nanmax(np.array([y+h,y_top]))
+        
+        return x_left,x_right,y_bot,y_top
+    
+    x_left = np.nan
+    x_right = np.nan
+    y_bot = np.nan
+    y_top = np.nan
+    
+    #-- start figure
+    
+    fig,axs = plt.subplots(ncols=3,nrows=3,figsize=(10,12))
+    
+    Ns = data_day.dims['launch_time']
+    
+    # colors
+    var_col = f.pw
+    norm = matplotlib.colors.Normalize(vmin=var_col.min(), vmax=var_col.max())
+    cmap = plt.cm.nipy_spectral
+    cmap = plt.cm.RdYlBu
+    cols = cmap(norm(var_col))
+    
+    #---- RH
+    ax = axs[0,0]
+    
+    for i_s in range(Ns):
+        ax.plot(data_day.relative_humidity[i_s]*100,pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.5)
+    
+    ax.set_xlim((-3,103))
+    ax.set_xlabel(r'Relative humidity $\varphi$ (%)')
+    
+    if not hide_id_prof:
+        
+        # stepfunction RH
+        pres_jump = 825
+        rh_min = 0.05
+        rh_max = 0.8
+        rh_step = piecewise_linear(pres_fit,[pres_jump,pres_jump],[rh_min,rh_max])
+        ax.plot(rh_step*100,pres_fit,'k',linewidth=2,linestyle="--")
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- qvstar
+    ax = axs[0,1]
+    for i_s in range(Ns):
+        ax.plot(data_day.specific_humidity[i_s]/data_day.relative_humidity[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.5)
+    
+    # ax.set_xlim((270,302))
+    ax.set_xlabel(r'Saturated specific hymidity $q_v^\star$ (kg/kg)')
+    
+    if not hide_id_prof:
+        
+        # power qvstar
+        # alpha_qvstar = 2.5
+        alpha_qvstar = 2.3
+        qvstar_0 = 0.02
+        qvstar_power = qvstar_0 * np.power(pres_fit/pres_fit[-1],alpha_qvstar)
+        ax.plot(qvstar_power,pres_fit,'k',linewidth=2,linestyle="--")
+    
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- W
+    ax = axs[0,2]
+    for i_s in range(Ns):
+        # ax.plot(f.wp_z[i_s],pres[i_s],c=cols[i_s],linewidth=0.5,alpha=0.5)
+        ax.plot(rad_scaling_all[day].rad_features.wp_z[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.5)
+    
+    ax.set_xscale('log')
+    ax.set_xlim((3e-1,100))
+    # ax.set_xlabel(r'$W(p) \equiv \int_z^{TOA} q_v \frac{dp}{g}$ (mm) $\propto \tau$',labelpad=-1)
+    ax.set_xlabel(r'Water path from top W (mm)',labelpad=-1)
+    
+    if not hide_id_prof:
+        
+        # idealized water path
+        W_fit = waterPath(qvstar_0,pres_fit,pres_jump,rh_min,rh_max,alpha_qvstar)
+        ax.plot(W_fit,pres_fit,'k',linewidth=2,linestyle="--")
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- B_nu(T(p))
+    ax = axs[1,0]
+    
+    nu_star_rot = 554 # cm-1
+    nu_star_rot_m_m1 = nu_star_rot*1e2 # m-1
+    B_rot = rad_scaling_all[day].planck(nu_star_rot_m_m1,data_day.temperature)*1e2 # cm-1
+    nu_star_vr = 1329 # cm-1
+    nu_star_vr_m_m1 = nu_star_vr*1e2 # m-1
+    B_vr = rad_scaling_all[day].planck(nu_star_vr_m_m1,data_day.temperature)*1e2 # cm-1
+    
+    # B = B_rot + B_vr
+    B = B_rot
+    
+    for i_s in range(Ns):
+        ax.plot(pi*B[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.5)
+    
+    ax.set_xlim((0.33,0.47))
+    # ax.set_xlim((0.33,0.62))
+    ax.set_xlabel(r'Planck $\pi B(\tilde{\nu}^+_1,T)$ (W.m$^{-2}$.cm)')
+    # ax.set_xlabel(r'Planck $\pi \tilde{B}(T)$ (W.m$^{-2}$.cm)')
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- phi_nu_star = tau*e(-tau)
+    ax = axs[1,1]
+    
+    W_star = 3 # mm
+    # kappa_star = 1/W_star # m2/kg, or mm-1
+    kappa_star = 0.3
+    tau_star = kappa_star*f.wp_z 
+    phi = tau_star*np.exp(-tau_star)
+    
+    for i_s in range(Ns):
+        ax.plot(phi[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.5)
+    
+    # ax.set_yscale('log')
+    # ax.set_xlim((-0.051,0.001))
+    ax.set_xlabel(r'Weighting function $\phi(\tilde{\nu}^+_1,W(p))$')
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- integral
+    ax = axs[1,2]
+    
+    #-- first, compute profiles    
+    nu_array_inv_m = np.linspace(20000,90000) # m-1
+    dnu_array = np.diff(nu_array_inv_m) # m-1
+    N_nu = len(nu_array_inv_m)
+    N_s = B.shape[0]
+    N_z = B.shape[1]
+    
+    rs = rad_scaling_all[day]
+    integral = rs.spectral_integral_rot + rs.spectral_integral_vr
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #-- show
+    for i_s in range(Ns):
+        ax.plot(integral[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.3)
+    
+    ax.set_xlabel(r'$\int \pi B(\tilde{\nu},T)\phi(\tilde{\nu},W) d{\tilde{\nu}}$ (W.m$^2$)')
+    
+    if not hide_id_prof:
+        
+        # estimate pi B delta nu / e
+        piB_star = 0.0054
+        delta_nu = 160 # cm-1
+        int_id = piB_star * delta_nu*m_to_cm / e
+        ax.axvline(x=int_id,c='k',linewidth=2,linestyle="--")
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- beta/p
+    ax = axs[2,0]
+    display_factor = 1e2
+    
+    for i_s in range(Ns):
+        ax.plot(display_factor*(rad_scaling_all[day].beta/pres_data)[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.3)
+    
+    # ax.set_yscale('log')
+    ax.set_xlim((-0.1,5.1))
+    ax.set_xlabel(r'$\beta/p$ ($\times 10^{4}$ Pa$^{-1}$)')
+    
+    if not hide_id_prof:
+        
+        # idealized beta
+        beta_id = computeBeta(pres_fit,pres_jump,rh_min,rh_max,alpha_qvstar)
+        ax.plot(display_factor*beta_id/pres_fit,pres_fit,'k',linewidth=2,linestyle="--")
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- full H estimate
+    ax = axs[2,1]
+    
+    g = 9.81 # m/s
+    c_p = 1000 # J/kg
+    day_to_seconds = 86400
+    H_est = -g/c_p*(rad_scaling_all[day].beta/pres_data/100)*integral*day_to_seconds
+    
+    for i_s in range(Ns):
+        ax.plot(H_est[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.3)
+    
+    ax.set_xlim((-15.1,0.6))
+    ax.set_xlabel(r'$-\frac{g}{c_p} \frac{\beta}{p} \int \pi B_{\tilde{\nu}}(T)\phi_{\tilde{\nu}} d{\tilde{\nu}}$ (K/day)')
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #---- actual H
+    ax = axs[2,2]
+    
+    for i_s in range(Ns):
+        ax.plot(data_day.q_rad_lw[i_s],pres_data[i_s],c=cols[i_s],linewidth=0.5,alpha=0.3)
+    
+    # ax.set_yscale('log')
+    ax.set_xlim((-15.1,0.6))
+    ax.set_xlabel(r'$H$ (K/day)')
+    
+    x_left,x_right,y_bot,y_top = updateBounds(ax,x_left,x_right,y_bot,y_top)
+    
+    #- all y axes
+    for ax in axs.flatten():
+        ax.set_ylim((490,1010))
+        ax.invert_yaxis()
+    for ax in axs[:,0]:
+        ax.set_ylabel('p (hPa)')
+        
+    fs = 14
+    #- label hypotheses
+    axs[1,0].text(0.5, 0.05, r'H$_1$', horizontalalignment='center',
+         verticalalignment='center', transform=axs[1,0].transAxes,fontsize=fs)
+    axs[1,1].text(0.5, 0.05, r'H$_2$', horizontalalignment='center',
+         verticalalignment='center', transform=axs[1,1].transAxes,fontsize=fs)
+    axs[1,2].text(0.5, 0.05, r'H$_1$ & H$_2$', horizontalalignment='right',
+         verticalalignment='center', transform=axs[1,2].transAxes,fontsize=fs)
+    axs[2,0].text(0.5, 0.05, r'H$_3$', horizontalalignment='center',
+         verticalalignment='center', transform=axs[2,0].transAxes,fontsize=fs)
+    #- label appproximation and target
+    axs[2,1].text(0.5, 0.05, r'(approximation)', horizontalalignment='center',
+         verticalalignment='center', transform=axs[2,1].transAxes,fontsize=fs-2)
+    axs[2,2].text(0.5, 0.05, r'(target)', horizontalalignment='center',
+         verticalalignment='center', transform=axs[2,2].transAxes,fontsize=fs-2)
+    
+    #- Color bar
+    dy = (y_top-y_bot)/80
+    cax = plt.axes([x_left,y_bot-8*dy,x_right-x_left,dy])
+    cbar = fig.colorbar(cm.ScalarMappable(norm=norm,cmap=cmap),cax=cax, orientation='horizontal')
+    cbar.set_label('PW (mm)',fontsize=fs)
+    
+    #--- Add panel labeling
+    pan_labs = ["(%s)"%chr(i) for i in range(ord('a'), ord('i')+1)]
+    for ax,pan_lab in zip(axs.flatten(),pan_labs):
+        t = ax.text(0.04,0.91,pan_lab,transform=ax.transAxes,fontsize=14)
+        t.set_bbox(dict(facecolor='w',alpha=0.8,edgecolor='none'))
+    
+    #-- Save
+    # plt.savefig(os.path.join(figdir,'FigureS%d%s.pdf'%(i_fig,'_noidprof'*hide_id_prof)),bbox_inches='tight')
+    # plt.savefig(os.path.join(figdir,'FigureS%d%s.png'%(i_fig,'_noidprof'*hide_id_prof)),dpi=300,bbox_inches='tight')
+    plt.savefig(os.path.join(figdir,'FigureS%d%s.jpg'%(i_fig,'_noidprof'*hide_id_prof)),dpi=300,bbox_inches='tight')    
 
-# ax.plot(W_all,H_equiv,'r')
-
-# # Center of mass of a uniform free-tropospheric RH (only depends on the shape of qvstar)
-# i_levmax = np.where(~np.isnan(qvstar))[0][-1] # assuming data is ordered from bottom to top
-# p_levmax = pres[i_levmax]
-# W_qvstar = computeWPaboveZ(qvstar,pres,p_levmax)
-# z_jump_FT = moist_intrusions['20200213, lower']['fit']['z_breaks_id'][1]
-# i_jump_FT = np.where(z>z_jump_FT)[0][0]
-# i_z = np.where(W_qvstar >= W_qvstar[i_jump_FT]/2)[0][0]
-# z_center_uRH = z[i_z]
-# i_H = np.where(H_all >= z_center_uRH)[0][0]
-# H_qvstar_center = H_all[i_H]
-# H_uniform = H_qvstar_center*np.ones((Nsample,))
-
-# ax.plot(W_all,H_uniform,'r')
 
 
-# labels
-ax.set_xlabel('Intrusion water path (mm)')
-ax.set_ylabel('Intrusion center level (km)')
-ax.set_ylim([H_all[0],H_all[-1]])
 
 
-#--- Add panel labeling
-pan_labs = '(a)','(b)','(c)'
-pan_cols = 'k','k','k'
-axs = ax1,ax2,ax3
-for ax,pan_lab,pan_col in zip(axs,pan_labs,pan_cols):
-    t = ax.text(0.04,0.02,pan_lab,c=pan_col,ha='left',va='bottom',
-            transform=ax.transAxes,fontsize=14)
-    # if ax != ax3:
-        # t.set_bbox(dict(facecolor='w', alpha=0.8, edgecolor='w'))
 
-#--- save
-plt.savefig(os.path.join(figdir,'Figure%d.pdf'%i_fig),bbox_inches='tight')
-# plt.savefig(os.path.join(figdir,'Figure%d.png'%i_fig),dpi=300,bbox_inches='tight')

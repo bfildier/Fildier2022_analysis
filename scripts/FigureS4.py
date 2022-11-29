@@ -3,10 +3,11 @@
 """
 Figure S4
 
-Created on Thu Jun 16 16:05:54 2022
+Created on Wed Jul 13 14:33:02 2022
 
 @author: bfildier
 """
+
 
 ##-- modules
 
@@ -19,7 +20,6 @@ from datetime import datetime as dt
 from datetime import timedelta, timezone
 import pytz
 import pickle
-import argparse
 
 # stats
 from scipy.stats import gaussian_kde
@@ -44,19 +44,19 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 ##-- directories
 
-workdir = os.path.dirname(os.path.realpath(__file__))
-# workdir = '/Users/bfildier/Code/analyses/EUREC4A/Fildier2022_analysis/scripts'
+# workdir = os.path.dirname(os.path.realpath(__file__))
+workdir = '/Users/bfildier/Code/analyses/EUREC4A/EUREC4A_organization/scripts'
 repodir = os.path.dirname(workdir)
 moduledir = os.path.join(repodir,'functions')
 resultdir = os.path.join(repodir,'results','radiative_features')
 figdir = os.path.join(repodir,'figures','paper')
-inputdir = os.path.join(repodir,"input")
-radinputdir = os.path.join(repodir,"input")
+inputdir = '/Users/bfildier/Dropbox/Data/EUREC4A/sondes_radiative_profiles/'
+radinputdir = os.path.join(repodir,'input')
 imagedir = os.path.join(repodir,'figures','snapshots','with_HALO_circle')
-
+scriptsubdir = 'Fildier2021'
 
 # Load own module
-projectname = 'Fildier2022_analysis'
+projectname = 'EUREC4A_organization'
 thismodule = sys.modules[__name__]
 
 ## Own modules
@@ -96,47 +96,9 @@ if __name__ == "__main__":
     
     exec(open(os.path.join(workdir,"load_data.py")).read())
     
-#%% Draw FigureS4
-
-    i_fig = 4
-
-    label_jump = '^\dagger'
-    m_to_cm = 1e2
-    day_to_seconds = 86400
-    hPa_to_Pa = 1e2
     
-    days2show = days
+#%%    Functions for masks and Boundary layer integral vs. PW
 
-    def computeBeta(pres,pres_jump,rh_min,rh_max,alpha,i_surf=-1):
-        """beta exponent
-        
-        Arguments:
-        - pres: reference pressure array (hPa)
-        - pres_jump: level of RH jump (hPa)
-        - rh_max: lower-tropospheric RH
-        - rh_min: upper-tropospheric RH
-        - alpha: power exponent
-        """
-        
-        hPa_to_Pa = 100 
-    
-        # init
-        beta = np.full(pres.shape,np.nan)
-        # lower troposphere
-        lowert = pres >= pres_jump
-        beta[lowert] = (alpha+1)/(1 - (1-rh_min/rh_max)*(pres_jump/pres[lowert])**(alpha+1))
-        # upper troposphere
-        uppert = pres < pres_jump
-        beta[uppert] = alpha+1
-        
-        return beta
-
-    def scatterDensity(ax,x,y,s,alpha):
-        xy = np.vstack([x,y])
-        z = gaussian_kde(xy)(xy)
-        
-        return ax.scatter(x,y,c=z,s=s,alpha=0.4)
-        
     def createMask(day):
         
         # remove surface peaks
@@ -161,12 +123,19 @@ if __name__ == "__main__":
         
         z_peak = rad_features_all[day].z_lw_peak/1e3 # km
         
-        if day in days_high_peaks:
-                
+        # if day in days_high_peaks:
+        if day in days_intrusions:
+            
             # subset without intrusions
-            i_d = np.where(np.array(days_high_peaks) == day)[0][0]
-            k_high = np.logical_and(z_peak <= z_max_all[i_d],
-                                    z_peak > z_min_all[i_d])
+            i_d_all = np.where(np.array(days_intrusions) == day)[0]
+            
+            k_high = False
+            
+            for i_d in i_d_all:
+                
+                k_high = np.logical_or(k_high,np.logical_and(z_peak <= z_max_intrusions[i_d],
+                                        z_peak > z_min_intrusions[i_d]))
+            
             k_low = np.logical_not(k_high)
         
             return k_low
@@ -175,337 +144,275 @@ if __name__ == "__main__":
             
             return np.full(z_peak.shape,True)
         
-
-    fig,axs = plt.subplots(ncols=1,nrows=3,figsize=(4.5,13.5))
-    plt.subplots_adjust(hspace=0.3,wspace=0.3)
-
-
-
-#-- (a) peak magnitude, using the approximation for the full profile, showing all profiles
-    ax = axs[0]
-    
-    H_peak_all = {}
-    qrad_peak_all = {}
-    s = []
-    mask_all = {}
-    
-    for day in days2show:
+    def createMaskClouds(day,rh_cloud = 0.95):
         
+        data_day = data_all.sel(launch_time=day)
+        # select moist-convecting levels
+        isAboveLCL = data_day.alt.data > 700
+        # select levels above 95% RH
+        isLevelSaturated = data_day.relative_humidity.data > rh_cloud
+        # is there one level meeting both criteria
+        iscloud_day = np.any(np.logical_and(isAboveLCL,isLevelSaturated),axis=1)
+    
+        return iscloud_day
+    
+    def createMaskDry(day,pw_max = 30):
+        
+        pw = rad_features_all[day].pw
+        
+        mask_dry = pw <= pw_max
+        
+        return mask_dry
+
+
+    def combineMasks(all_masks,all_show):
+        
+        mask_combined = True
+        
+        for mask,show in zip(all_masks,all_show):
+        
+            if show is not None:
+                
+                # add either 'mask' or its complement, depending on 'show'
+                mask_combined *= (show * mask + np.logical_not(show) * ~mask)
+        
+        return mask_combined
+    
+    
+    def computeQradIntegral(day,p_surf):
+
         rs = rad_scaling_all[day]
         f = rad_scaling_all[day].rad_features
-        k_bottom = np.where(np.logical_not(np.isnan(f.wp_z[0])))[0][0] 
+        # k_bottom = np.where(np.logical_not(np.isnan(f.wp_z[0])))[0][0]
         
-        #- approximated peak
-        # H_peak = rad_scaling_all[day].scaling_magnitude_lw_peak*1e8
+        #- approximated BL cooling
         Ns = rad_scaling_all[day].rad_features.pw.size
-        H_peak = np.full(Ns,np.nan)
-        for i_s in range(Ns):
-            i_peak = f.i_lw_peak[i_s]
-            p_peak = f.pres_lw_peak[i_s]
-            
-            # beta
-            beta = f.beta_peak[i_s]
-            # spectral integral
-            spec_int = rs.spectral_integral_rot[i_s][i_peak] + rs.spectral_integral_vr[i_s][i_peak]
-            # constants
-            C = -gg/c_pd
-            
-            H_peak[i_s] = C/(p_peak*hPa_to_Pa) * beta * spec_int * day_to_seconds
-            
-        H_peak_all[day] = H_peak
-    
-        #- true peak
-        qrad_peak = rad_scaling_all[day].rad_features.lw_peaks.qrad_lw_peak
-        qrad_peak_all[day] = qrad_peak
-    
-        s.append(0.005*np.absolute(rad_scaling_all[day].rad_features.lw_peaks.pres_lw_peak))
-        
-        ## mask
-        # geometry
-        keep = createMask(day)
-        # intrusions
-        remove_instrusions = createMaskIntrusions(day)
-        # merge
-        mask_all[day] = np.logical_and(keep,remove_instrusions)
-    
-    # plot
-    m = np.hstack([mask_all[day] for day in days2show])
-    m_inv = np.logical_not(m)
-    x = np.hstack([qrad_peak_all[day] for day in days2show])
-    y = np.hstack([H_peak_all[day] for day in days2show])
-    s = np.hstack(s)
-    
-    ax.scatter(x[m_inv],y[m_inv],s[m_inv],'k',alpha=0.1)
-    # scatterDensity(ax,x,y,s,alpha=0.5)
-    h = scatterDensity(ax,x[m],y[m],s[m],alpha=0.5)
-
-    # # 1:1 line
-    # x_ex = np.array([-18,-2])
-    # ax.plot(x_ex,x_ex,'k:',alpha=0.4,label='1 : 1')
-    
-    ax.set_xlabel('Measured cooling peak magnitude (K/day)')
-    ax.set_ylabel('Estimate (K/day)')
-    ax.set_title(r'Peak magnitude as eq. (8)')
-    # square figure limits
-    xlim = (-25.4,-1.6)
-    ax.set_xlim(xlim)
-    ax.set_ylim(xlim)
-    
-    #- linear fit
-    xmin,xmax = np.min(x), np.max(x) 
-    xrange = xmax-xmin
-    a_fit , pcov = optimize.curve_fit(lambda x,a:a*x, x[m], y[m],p0=1)
-    x_fit = np.linspace(xmin-xrange/40,xmax+xrange/40)
-    y_fit = a_fit*x_fit
-    # y_fit = 1*x_fit
-    cov = np.cov(x[m],y[m])
-    r_fit = cov[0,1]/np.sqrt(cov[0,0]*cov[1,1])
-    
-    # show
-    ax.plot(x_fit,y_fit,'k:')
-
-    # # 1:1 line
-    # ax.plot([-21,0],[-21,0],'k')
-
-    # write numbers
-    t = ax.text(0.05,0.05,'slope = %1.2f \n r = %1.2f'%(a_fit,r_fit),transform=ax.transAxes)
-    t.set_bbox(dict(facecolor='w',alpha=0.8,edgecolor='none'))
-    
-    # colorbar density
-    axins1 = inset_axes(ax,
-                    width="2%",  # width = 70% of parent_bbox width
-                    height="50%",  # height : 5%
-                    loc='center left')
-    cb = fig.colorbar(h, cax=axins1, orientation="vertical")
-    axins1.yaxis.set_ticks_position("right")
-    axins1.tick_params(axis='y', labelsize=9)
-    cb.set_label('Gaussian kernel density',labelpad=5)
-    
-    
-    
-    alpha_qvstar = 2.3
-    piB_star = 0.0054
-    delta_nu = 160 # cm-1
-    
-#-- (b) peak magnitude, using the intermediate approximation (beta and 1 wavenumber), showing all profiles
-    ax = axs[1]
-    
-    H_peak_all = {}
-    qrad_peak_all = {}
-    s = []
-    mask_all = {}
-    
-    for day in days2show:
-        
-        rs = rad_scaling_all[day]
-        f = rad_scaling_all[day].rad_features
-        k_bottom = np.where(np.logical_not(np.isnan(f.wp_z[0])))[0][0] 
-        
-        #- approximated peak
-        # H_peak = rad_scaling_all[day].scaling_magnitude_lw_peak*1e8
-        Ns = rad_scaling_all[day].rad_features.pw.size
-        H_peak = np.full(Ns,np.nan)
-        for i_s in range(Ns):
-
-            i_peak = f.i_lw_peak[i_s]
-            p_peak = f.pres_lw_peak[i_s]
-            
-            # beta
-            beta = f.beta_peak[i_s]
-            # approximation of spectral integral
-            spec_int_approx = piB_star * delta_nu*m_to_cm/e
-            # constants
-            C = -gg/c_pd
-            
-            H_peak[i_s] = C/(p_peak*hPa_to_Pa) * beta * spec_int_approx * day_to_seconds
-        
-        H_peak_all[day] = H_peak
-    
-        #- true peak
-        qrad_peak = rad_scaling_all[day].rad_features.lw_peaks.qrad_lw_peak
-        qrad_peak_all[day] = qrad_peak
-    
-        s.append(0.005*np.absolute(rad_scaling_all[day].rad_features.lw_peaks.pres_lw_peak))
-        
-        ## mask
-        # geometry
-        keep = createMask(day)
-        # intrusions
-        remove_instrusions = createMaskIntrusions(day)
-        # merge
-        mask_all[day] = np.logical_and(keep,remove_instrusions)
-    
-    # plot
-    m = np.hstack([mask_all[day] for day in days2show])
-    m_inv = np.logical_not(m)
-    x = np.hstack([qrad_peak_all[day] for day in days2show])
-    y = np.hstack([H_peak_all[day] for day in days2show])
-    s = np.hstack(s)
-    
-    ax.scatter(x[m_inv],y[m_inv],s[m_inv],'k',alpha=0.1)
-    # scatterDensity(ax,x,y,s,alpha=0.5)
-    h = scatterDensity(ax,x[m],y[m],s[m],alpha=0.5)
-
-    # # 1:1 line
-    # x_ex = np.array([-18,-2])
-    # ax.plot(x_ex,x_ex,'k:',alpha=0.4,label='1 : 1')
-    
-    ax.set_xlabel('Measured cooling peak magnitude (K/day)')
-    ax.set_ylabel('Estimate (K/day)')
-    ax.set_title(r'Peak magnitude as eq. (9)')
-    # square figure limits
-    xlim = (-25.4,-1.6)
-    ax.set_xlim(xlim)
-    ax.set_ylim(xlim)
-    
-    #- linear fit
-    xmin,xmax = np.min(x), np.max(x) 
-    xrange = xmax-xmin
-    a_fit , pcov = optimize.curve_fit(lambda x,a:a*x, x[m], y[m],p0=1)
-    x_fit = np.linspace(xmin-xrange/40,xmax+xrange/40)
-    y_fit = a_fit*x_fit
-    # y_fit = 1*x_fit
-    cov = np.cov(x[m],y[m])
-    r_fit = cov[0,1]/np.sqrt(cov[0,0]*cov[1,1])
-    
-    # show
-    ax.plot(x_fit,y_fit,'k:')
-
-    # # 1:1 line
-    # ax.plot([-21,0],[-21,0],'k')
-
-    # write numbers
-    t = ax.text(0.05,0.05,'slope = %1.2f \n r = %1.2f'%(a_fit,r_fit),transform=ax.transAxes)
-    t.set_bbox(dict(facecolor='w',alpha=0.8,edgecolor='none'))
-    
-    # colorbar density
-    axins1 = inset_axes(ax,
-                    width="2%",  # width = 70% of parent_bbox width
-                    height="50%",  # height : 5%
-                    loc='center left')
-    cb = fig.colorbar(h, cax=axins1, orientation="vertical")
-    axins1.yaxis.set_ticks_position("right")
-    axins1.tick_params(axis='y', labelsize=9)
-    cb.set_label('Gaussian kernel density',labelpad=5)
-    
-    
-    
-#-- (c) peak magnitude, using the simplified scaling (RH step function and 1 wavenumber), showing all profiles
-    ax = axs[2]
-    
-    H_peak_all = {}
-    qrad_peak_all = {}
-    s = []
-    mask_all = {}
-    
-    for day in days2show:
-        
-        rs = rad_scaling_all[day]
-        f = rad_scaling_all[day].rad_features
-        k_bottom = np.where(np.logical_not(np.isnan(f.wp_z[0])))[0][0] 
-        
-        #- approximated peak
-        # H_peak = rad_scaling_all[day].scaling_magnitude_lw_peak*1e8
-        Ns = rad_scaling_all[day].rad_features.pw.size
-        H_peak = np.full(Ns,np.nan)
+        qrad_int = np.full(Ns,np.nan)
         
         for i_s in range(Ns):
             i_peak = f.i_lw_peak[i_s]
             p_peak = f.pres_lw_peak[i_s]
             
-            # CRH above = W(p)/Wsat(p)
-            CRHabove = f.wp_z[i_s]/f.wpsat_z[i_s]
-            # CRH below = (W_s-W(p))/(Wsat_s-Wsat(p))
-            CRHbelow = (f.wp_z[i_s,k_bottom]-f.wp_z[i_s])/(f.wpsat_z[i_s,k_bottom]-f.wpsat_z[i_s])
-            # approximation of spectral integral
-            spec_int_approx = piB_star * delta_nu*m_to_cm/e
-            # constants
-            alpha = alpha_qvstar
-            C = -gg/c_pd * (1+alpha)
+                        
+            # compute integral cooling
+
+            s_notnans = slice(12,None)
+            qrad_lw_not_nans = np.flipud(rad_scaling_all[day].rad_features.qrad_lw_smooth[i_s][s_notnans])
+            pres_not_nans = np.flipud(f.pres[s_notnans])
             
-            # compute
-            H_peak[i_s] = C/(p_peak*hPa_to_Pa) * CRHbelow[i_peak]/CRHabove[i_peak] * spec_int_approx * day_to_seconds
- 
-            # # Try including inversion factor
-            # deltaT_inv = 5
-            # inv_factor = exp(-0.065*deltaT_inv)
-            # # compute
-            # H_peak[i_s] = C/(p_peak*hPa_to_Pa) * inv_factor * CRHbelow[i_peak]/CRHabove[i_peak] * spec_int_approx * day_to_seconds
+            qrad_int[i_s] = f.mo.pressureIntegral(arr=qrad_lw_not_nans,pres=pres_not_nans,p0=p_peak,p1=p_surf,z_axis=0) / \
+                                    f.mo.pressureIntegral(arr=np.ones(qrad_lw_not_nans.shape),pres=pres_not_nans,p0=p_peak,p1=p_surf,z_axis=0)
+
+        return qrad_int
+
+    def computeQradPeak(day):
         
-        H_peak_all[day] = H_peak
-    
-        #- true peak
-        qrad_peak = rad_scaling_all[day].rad_features.lw_peaks.qrad_lw_peak
-        qrad_peak_all[day] = qrad_peak
-
-        s.append(0.005*np.absolute(rad_scaling_all[day].rad_features.lw_peaks.pres_lw_peak))
-
-        ## mask
-        # geometry
-        keep = createMask(day)
-        # intrusions
-        remove_instrusions = createMaskIntrusions(day)
-        # merge
-        mask_all[day] = np.logical_and(keep,remove_instrusions)
-    
-    # plot
-    m = np.hstack([mask_all[day] for day in days2show])
-    m_inv = np.logical_not(m)
-    x = np.hstack([qrad_peak_all[day] for day in days2show])
-    y = np.hstack([H_peak_all[day] for day in days2show])
-    s = np.hstack(s)
-    
-    ax.scatter(x[m_inv],y[m_inv],s[m_inv],'k',alpha=0.1)
-    h = scatterDensity(ax,x[m],y[m],s[m],alpha=0.5)
-
-    
-    ax.set_xlabel('Measured cooling peak magnitude (K/day)')
-    ax.set_ylabel('Estimate (K/day)')
-    ax.set_title(r'Peak magnitude as eq. (10)')
-    # square figure limits
-    xlim = (-25.4,-1.6)
-    ax.set_xlim(xlim)
-    ax.set_ylim(xlim)
-    
-    #- linear fit
-    xmin,xmax = np.min(x), np.max(x) 
-    xrange = xmax-xmin
-    a_fit , pcov = optimize.curve_fit(lambda x,a:a*x, x[m], y[m],p0=1)
-    x_fit = np.linspace(xmin-xrange/40,xmax+xrange/40)
-    y_fit = a_fit*x_fit
-    # y_fit = 1*x_fit
-    cov = np.cov(x[m],y[m])
-    r_fit = cov[0,1]/np.sqrt(cov[0,0]*cov[1,1])
-    
-    # show
-    ax.plot(x_fit,y_fit,'k:')
-
-    # # 1:1 line
-    # ax.plot([-21,0],[-21,0],'k')
-
-    # write numbers
-    t = ax.text(0.05,0.05,'slope = %1.2f \n r = %1.2f'%(a_fit,r_fit),transform=ax.transAxes)
-    t.set_bbox(dict(facecolor='w',alpha=0.8,edgecolor='none'))
-    
-    # colorbar density
-    axins1 = inset_axes(ax,
-                    width="2%",  # width = 70% of parent_bbox width
-                    height="50%",  # height : 5%
-                    loc='center left')
-    cb = fig.colorbar(h, cax=axins1, orientation="vertical")
-    axins1.yaxis.set_ticks_position("right")
-    axins1.tick_params(axis='y', labelsize=9)
-    cb.set_label('Gaussian kernel density',labelpad=5)
+        qrad_peak = rad_features_all[day].qrad_lw_peak
         
- 
+        return qrad_peak
+        
+    def computeZQrad(day):
+        
+        z_peak = rad_features_all[day].z_lw_peak/1e3 # km
+        
+        return z_peak
     
-    #--- Add panel labeling
-    pan_labs = '(a)','(b)','(c)'
-    for ax,pan_lab in zip(axs,pan_labs):
-        t = ax.text(0.03,0.92,pan_lab,transform=ax.transAxes,fontsize=14)
-        t.set_bbox(dict(facecolor='w',alpha=0.8,edgecolor='none'))
     
-    #--- save
-    # plt.savefig(os.path.join(figdir,'FigureS%d.pdf'%i_fig),bbox_inches='tight')
-    plt.savefig(os.path.join(figdir,'FigureS%d.png'%i_fig),dpi=300,bbox_inches='tight')
+#%% Figure S4
+
+i_fig = 4
+
+##--- compute data
+
+z_peak_all = {}
+qrad_peak_all = {}
+qrad_int_all = {}
+mask_geometry = {}
+mask_no_intrusions = {}
+mask_clouds = {}
+mask_dry = {}
+
+p_surf = 950 # hPa
+
+##-- Compute
+
+for day in days:
+            
+    # store
+    z_peak_all[day] = computeZQrad(day)
+    qrad_peak_all[day] = computeQradPeak(day)
+    qrad_int_all[day] = computeQradIntegral(day,p_surf)
     
+    ## masks
+    # geometry
+    mask_geometry[day] = createMask(day)
+    # intrusions
+    mask_no_intrusions[day] = createMaskIntrusions(day)
+    # clouds
+    mask_clouds[day] = createMaskClouds(day)
+    # dry columns
+    mask_dry[day] = createMaskDry(day)
+    
+
+fig, axs = plt.subplots(nrows=3,figsize=(4,11))
+
+
+#--- (a) scatter of peak heights as a function of PW
+
+ax = axs[0]
+
+for day,pat,conf in zip(days,name_pattern,confidence_pattern):
+    
+    pw = rad_features_all[day].pw
+    z_peak = z_peak_all[day]
+    qrad_peak = qrad_peak_all[day]
+    
+    # circle diameter proportional to size of peak
+    s = np.absolute(qrad_peak)*2
+    c = col_pattern[pat]
+    
+    all_masks = [mask_geometry[day],mask_no_intrusions[day],mask_clouds[day],mask_dry[day]]
+    show_noint_nocld = [True,True,False,None]
+    show_noint_cld = [True,True,True,None]
+    show_int = [True,False,None,None]
+    
+    for suff in 'noint_nocld','noint_cld','int':
+        show_which = getattr(thismodule,'show_%s'%suff)
+        setattr(thismodule,'mask_%s'%suff,combineMasks(all_masks,show_which))
+    
+    # intrusions
+    ax.scatter(pw[mask_int],z_peak[mask_int],s=s[mask_int],c='grey',edgecolor='none',alpha=0.2)
+    
+    # cloudy sondes, no intrusion
+    ax.scatter(pw[mask_noint_cld],z_peak[mask_noint_cld],s=s[mask_noint_cld],c='none',edgecolor=c,linewidth=0.5,alpha=0.2)
+    
+    # clear-sky sondes, no intrusion
+    ax.scatter(pw[mask_noint_nocld],z_peak[mask_noint_nocld],s=s[mask_noint_nocld],c=c,edgecolor='none',alpha=0.3)
+
+ax.set_xlabel('PW (mm)')
+ax.set_ylabel(r'Peak height (km)',labelpad=20)
+ax.set_ylim((-0.3,8.1))
+
+
+#--- (b) scatter of peak magnitudes as a function of PW
+
+ax = axs[1]
+
+
+for day,pat,conf in zip(days,name_pattern,confidence_pattern):
+    
+    pw = rad_features_all[day].pw
+    z_peak = z_peak_all[day]
+    qrad_peak = qrad_peak_all[day]
+    Ns = pw.size
+    
+    # circle diameter proportional to size of peak
+    s = 10*np.ones(Ns)
+    c = col_pattern[pat]
+    
+    all_masks = [mask_geometry[day],mask_no_intrusions[day],mask_clouds[day],mask_dry[day]]
+    show_noint_nocld = [True,True,False,None]
+    show_noint_cld = [True,True,True,None]
+    show_int = [True,False,None,None]
+    
+    for suff in 'noint_nocld','noint_cld','int':
+        show_which = getattr(thismodule,'show_%s'%suff)
+        setattr(thismodule,'mask_%s'%suff,combineMasks(all_masks,show_which))
+    
+    # intrusions
+    ax.scatter(pw[mask_int],qrad_peak[mask_int],s=s[mask_int],c='grey',edgecolor='none',alpha=0.2)
+    
+    # cloudy sondes, no intrusion
+    ax.scatter(pw[mask_noint_cld],qrad_peak[mask_noint_cld],s=s[mask_noint_cld],c='none',edgecolor=c,linewidth=0.5,alpha=0.2)
+    
+    # clear-sky sondes, no intrusion
+    ax.scatter(pw[mask_noint_nocld],qrad_peak[mask_noint_nocld],s=s[mask_noint_nocld],c=c,edgecolor='none',alpha=0.3)
+    
+
+ax.set_xlabel('PW (mm)')
+ax.set_ylabel(r'Peak magnitude (K/day)')
+ax.set_ylim((-14.1,-2.3))
+
+
+#--- (c) scatter of integral cooling magnitudes as a function of PW
+
+ax = axs[2]
+
+
+for day,pat,conf in zip(days,name_pattern,confidence_pattern):
+    
+    pw = rad_features_all[day].pw
+    z_peak = z_peak_all[day]
+    qrad_peak = qrad_peak_all[day]
+    qrad_int = qrad_int_all[day]
+    print(np.sum(np.isnan(qrad_int)))
+    
+    # circle diameter proportional to size of peak
+    s = np.absolute(qrad_peak)*2
+    c = col_pattern[pat]
+    
+    all_masks = [mask_geometry[day],mask_no_intrusions[day],mask_clouds[day],mask_dry[day]]
+    show_noint_nocld = [True,True,False,None]
+    show_noint_cld = [True,True,True,None]
+    show_int = [True,False,None,None]
+    
+    for suff in 'noint_nocld','noint_cld','int':
+        show_which = getattr(thismodule,'show_%s'%suff)
+        setattr(thismodule,'mask_%s'%suff,combineMasks(all_masks,show_which))
+    
+    # intrusions
+    ax.scatter(pw[mask_int],qrad_int[mask_int],s=s[mask_int],c='grey',edgecolor='none',alpha=0.2)
+    
+    # cloudy sondes, no intrusion
+    ax.scatter(pw[mask_noint_cld],qrad_int[mask_noint_cld],s=s[mask_noint_cld],c='none',edgecolor=c,linewidth=0.5,alpha=0.2)
+    
+    # clear-sky sondes, no intrusion
+    ax.scatter(pw[mask_noint_nocld],qrad_int[mask_noint_nocld],s=s[mask_noint_nocld],c=c,edgecolor='none',alpha=0.3)
+
+
+ax.set_xlabel('PW (mm)')
+ax.set_ylabel(r'Integral cooling (K/day)')
+ax.set_ylim((-5.4,-1.8))
+
+
+## Fully-manual legend QRAD
+x_box = 0.65
+y_box = 0.2
+rect = mpatches.Rectangle((x_box+0.02,y_box+0.015), width=0.3, height=0.13,edgecolor='grey', facecolor="none",linewidth=0.5,alpha=0.5, transform=ax.transAxes)
+ax.add_patch(rect)
+for qpeak,y in zip([5,10],[0.04,0.09]):
+    
+    # s = ((np.absolute(qint)-2.5)**2)*150/sqrt(20)
+    s = np.absolute(qpeak)*2/sqrt(3)
+    
+    circle = mlines.Line2D([0], [0], marker='o', color='w',
+                    markerfacecolor='r', markersize=s)
+    ax.scatter(x_box+0.06,y_box+y+0.01,s=s,c='k',edgecolor='none',transform=ax.transAxes)
+    ax.text(x_box+0.08,y_box+y,s=r'$\left\vert H^*\right\vert >%d$ K/day'%qpeak,fontsize=7,transform=ax.transAxes)
+
+## legend pattern
+for pat in col_pattern.keys():
+    print(pat)
+    lab = pat
+    if pat == '':
+        lab = 'Moist intrusions'
+    setattr(thismodule,"h_%s"%pat,mpatches.Patch(color=col_pattern[pat],linewidth=0,alpha=0.6,label=lab))
+h_cld = mpatches.Patch(color='w',edgecolor='k',linewidth=1,alpha=1,label='cloudy')
+ax.legend(loc='lower right',handles=[h_Fish,h_Flower,h_Gravel,h_Sugar,h_,h_cld],ncol=2,fontsize=7)
+
+
+for ax in axs:
+    
+    ax.set_xlim(17,48)
+
+#--- Add panel labeling
+pan_labs = '(a)','(b)','(c)'
+pan_cols = 'k','k','k'
+for ax,pan_lab,pan_col in zip(axs,pan_labs,pan_cols):
+    t = ax.text(0.02,0.98,pan_lab,c=pan_col,ha='left',va='top',
+            transform=ax.transAxes,fontsize=16)
+    t.set_bbox(dict(facecolor='w', alpha=0.5, edgecolor='none'))
+
+#--- save
+plt.savefig(os.path.join(figdir,'FigureS%d.pdf'%i_fig),bbox_inches='tight')
+# plt.savefig(os.path.join(figdir,'FigureS%d.png'%i_fig),dpi=300,bbox_inches='tight')

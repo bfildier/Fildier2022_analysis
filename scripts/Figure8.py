@@ -46,19 +46,19 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 ##-- directories
 
-workdir = os.path.dirname(os.path.realpath(__file__))
-# workdir = '/Users/bfildier/Code/analyses/EUREC4A/Fildier2022_analysis/scripts'
+# workdir = os.path.dirname(os.path.realpath(__file__))
+workdir = '/Users/bfildier/Code/analyses/EUREC4A/EUREC4A_organization/scripts'
 repodir = os.path.dirname(workdir)
 moduledir = os.path.join(repodir,'functions')
 resultdir = os.path.join(repodir,'results','radiative_features')
 figdir = os.path.join(repodir,'figures','paper')
-inputdir = os.path.join(repodir,"input")
-radinputdir = os.path.join(repodir,"input")
+inputdir = '/Users/bfildier/Dropbox/Data/EUREC4A/sondes_radiative_profiles/'
+radinputdir = os.path.join(repodir,'input')
 imagedir = os.path.join(repodir,'figures','snapshots','with_HALO_circle')
-
+scriptsubdir = 'Fildier2021'
 
 # Load own module
-projectname = 'Fildier2022_analysis'
+projectname = 'EUREC4A_organization'
 thismodule = sys.modules[__name__]
 
 ## Own modules
@@ -99,9 +99,9 @@ if __name__ == "__main__":
     exec(open(os.path.join(workdir,"load_data.py")).read())
 
 
-#%% Figure S6 -- Moist intrusion, spectral figure
+#%% Figure 8 -- Moist intrusion, spectral figure
 
-i_fig = 6
+i_fig = 8
 
 fig,axs = plt.subplots(ncols=2,nrows=1,figsize=(8.5,4))
 
@@ -148,59 +148,16 @@ ax.set_ylim((-0.15,8.15))
 ##-- (b) nu_star
 ax = axs[1]
 
-def computeWPaboveZ(qv,pres,p_top):
-    """Calculates the integrated water path above each level.
 
-    Arguments:
-        - qv: specific humidity in kg/kg, Nz-vector
-        - pres: pressure coordinate in hPa, Nz vector
-        - p_top: pressure of upper integration level
-
-    returns:
-        - wp_z: water path above each level, Nz-vector"""
-
-    Np = qv.shape[0]
-    wp_z = np.full(Np,np.nan)
-
-    p_increasing = np.diff(pres)[0] > 0
-    
-    if p_increasing:
-        
-        i_p_top = np.where(pres >= p_top)[0][0]
-        
-        for i_p in range(i_p_top,Np):
-        # self.wp_z[:,i_z] = self.mo.pressureIntegral(arr=data.specific_humidity[:,i_z:],pres=pres[i_z:],p_levmin=pres[i_z],p_levmax=pres[-1],z_axis=z_axis)
-
-            arr = qv
-            p = pres
-            p0 = p_top
-            p1 = p[i_p]
-            i_w = i_p
-            
-            wp_z[i_w] = mo.pressureIntegral(arr=arr,pres=p,p0=p0,p1=p1)
-
-    else:
-        
-        i_p_top = np.where(pres >= p_top)[0][-1]
-
-        for i_p in range(i_p_top):
-            
-            arr = np.flip(qv)
-            p = np.flip(pres)
-            p0 = p_top
-            p1 = pres[i_p]
-            i_w = i_p
-
-            wp_z[i_w] = mo.pressureIntegral(arr=arr,pres=p,p0=p0,p1=p1)
-
-    return wp_z
-
-def computeNuProfile(i_prof,radprf,band='rot'):
+def computeNuProfile(i_prof,radprf,band='rot',z_corrected=False):
     
     qv_prof = radprf['h2o'].data[i_prof]
     pres_prof = radprf['play'].data/1e2
     W_prof = computeWPaboveZ(qv_prof,pres_prof,0)
-    kappa_prof = 1/W_prof
+    if z_corrected:
+        kappa_prof = 1/W_prof * (1 + 0.1 * (z-z_jump) * W)
+    else:
+        kappa_prof = 1/W_prof
     nu_prof = rad_scaling_all['20200213'].nu(kappa_prof,band=band)/1e2 # in cm-1
     
     return nu_prof,W_prof
@@ -218,6 +175,8 @@ i_jump = np.where(z >= z_jump)[0][0]
 nu_peak_all = []
 nu_int_all = []
 
+##-- Show curves
+
 for i_prof,i_int,radprf,col,linestyle in zip(inds,inds_int,radprf_s,cols,linestyles):
 
     nu_prof,W_prof = computeNuProfile(i_prof,radprf,band=band)
@@ -225,19 +184,51 @@ for i_prof,i_int,radprf,col,linestyle in zip(inds,inds_int,radprf_s,cols,linesty
     nu_peak_all.append(nu_prof[i_jump])
     nu_int_all.append(nu_prof[i_int])
     ax.plot(nu_prof,z,c=col,linestyle=linestyle)
+    
+# add z_corrected for upper intrusion
+nu_prof_z_corrected,W_prof_z_corrected = computeNuProfile(inds[-1],radprf_s[-1],band=band,z_corrected=True)
+nu_peak_z_corrected = nu_prof_z_corrected[i_jump]
+nu_int_z_corrected = nu_prof_z_corrected[i_int]
+ax.plot(nu_prof_z_corrected,z,c='r',linestyle=':')
 
-# add points at peak height
+
+##- add points at peak height
+
 ax.scatter(nu_peak_all[1:2],[z_jump],facecolor='k')#cols[1:2])
 inv = ax.transData.inverted()
 # ax.plot([nu_peak_all[1]]*2,[-1,z_jump],c='k',linestyle='-',linewidth=0.5)
 # add points at intrusion center of mass
-ax.scatter(nu_int_all[1:],[z[i_zint_1],z[i_zint_2]],facecolor='none',edgecolor='k')#cols[1:])
+ax.scatter(nu_int_all[1],[z[i_zint_1]],facecolor='b')#cols[1:])
+ax.scatter(nu_int_all[2],[z[i_zint_2]],facecolor='none',edgecolor='b')#cols[1:])
 # ax.plot([nu_int_all[1]]*2,[-1,z[i_zint_1]],c='k',linestyle='-',linewidth=0.5)
 # ax.plot([nu_int_all[2]]*2,[-1,z[i_zint_2]],c='k',linestyle='-',linewidth=0.5)
-ax.grid()
+ax.scatter(nu_int_z_corrected,[z[i_zint_2]],facecolor='none',edgecolor='r')#cols[1:])
+
+
+##-- add grid
+# ax.grid()
+
+##-- add shading
+delta_nu = 160 # cm-1
+# emission
+nu_min = nu_peak_all[1] - delta_nu/2
+nu_max = nu_peak_all[1] + delta_nu/2
+ax.fill_betweenx(y=[z[i_jump]-0.1,9],x1=nu_min,x2=nu_max,color='black',alpha=0.1)
+# absorption lower fixed kappa
+nu_min = nu_int_all[-2] - delta_nu/2
+nu_max = nu_int_all[-2] + delta_nu/2
+ax.fill_betweenx(y=[z[i_zint_1]-0.2,z[i_zint_1]+0.2],x1=nu_min,x2=nu_max,color='blue',alpha=0.1)
+# absorption upper fixed kappa
+nu_min = nu_int_all[-1] - delta_nu/2
+nu_max = nu_int_all[-1] + delta_nu/2
+ax.fill_betweenx(y=[z[i_zint_2]-0.5,z[i_zint_2]+0.8],x1=nu_min,x2=nu_max,color='blue',alpha=0.1)
+# absorption upper varying kappa
+nu_min = nu_int_z_corrected - delta_nu/2
+nu_max = nu_int_z_corrected + delta_nu/2
+ax.fill_betweenx(y=[z[i_zint_2]-0.5,z[i_zint_2]+0.8],x1=nu_min,x2=nu_max,color='red',alpha=0.1)
 
 ax.set_ylabel(' z(km)')
-ax.set_xlabel(r'$\tilde{\nu}^+$ (cm$^{-1}$), obeying $\kappa(\tilde{\nu}^+)W(z) = 1$')
+ax.set_xlabel(r'Wavenumber $\nu$ (cm$^{-1}$)')
 ax.set_title(r'Most emitting/absorbing $\nu$ ($\tau = 1$)')
 ax.set_xlim((350,800))
 ax.set_ylim((-0.15,8.15))
@@ -249,5 +240,5 @@ for ax,pan_lab in zip(axs,pan_labs):
     t.set_bbox(dict(facecolor='w',alpha=0.8,edgecolor='none'))
 
 #--- save
-plt.savefig(os.path.join(figdir,'FigureS%d.pdf'%i_fig),bbox_inches='tight')
-# plt.savefig(os.path.join(figdir,'FigureS%d.png'%i_fig),dpi=300,bbox_inches='tight')
+plt.savefig(os.path.join(figdir,'Figure%d.pdf'%i_fig),bbox_inches='tight')
+# plt.savefig(os.path.join(figdir,'Figure%d.png'%i_fig),dpi=300,bbox_inches='tight')
